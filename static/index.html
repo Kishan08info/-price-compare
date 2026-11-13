@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Price Compare</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c1f24; --muted:#6b7280; --accent:#0f766e; --best:#ecfdf5; --border:#e5e7eb; --warn:#b45309; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111418; --card:#1a1e24; --text:#e8eaed; --muted:#9aa0a6; --accent:#2dd4bf; --best:#0f2a26; --border:#2b313a; --warn:#f59e0b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { margin: 0 0 4px; font-size: 1.7rem; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  form { display:flex; gap:8px; }
+  input { flex:1; padding:12px 14px; font-size:1rem; border:1px solid var(--border); border-radius:10px; background:var(--card); color:var(--text); min-width:0; }
+  button { padding:12px 20px; font-size:1rem; border:0; border-radius:10px; background:var(--accent); color:#fff; cursor:pointer; font-weight:600; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-top:16px; }
+  .product { display:flex; gap:16px; align-items:center; }
+  .product img { width:72px; height:72px; object-fit:contain; border-radius:8px; background:#fff; }
+  .muted { color:var(--muted); font-size:.9rem; }
+  .best { background:var(--best); border-color:var(--accent); }
+  .best .price { font-size:2rem; font-weight:700; color:var(--accent); }
+  .tag { display:inline-block; font-size:.75rem; padding:2px 8px; border-radius:999px; border:1px solid var(--border); margin-right:4px; }
+  .tag.off { color:var(--accent); border-color:var(--accent); }
+  .tag.warn { color:var(--warn); border-color:var(--warn); }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:10px 6px; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { font-size:.8rem; color:var(--muted); font-weight:600; }
+  td.num { white-space:nowrap; font-variant-numeric: tabular-nums; }
+  s { color:var(--muted); font-size:.85rem; }
+  a { color:var(--accent); }
+  .error { color:#dc2626; }
+  details summary { cursor:pointer; color:var(--muted); }
+  @media (max-width: 600px) { form { flex-direction:column; } .hide-sm { display:none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Price Compare</h1>
+  <p class="sub">Paste a product link from Amazon, Flipkart, Walmart, Best Buy or another store to find the lowest price.</p>
+  <form id="f">
+    <input id="url" type="url" placeholder="https://www.amazon.com/.../dp/B0..." required>
+    <button id="go">Compare</button>
+  </form>
+  <div id="out"></div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const money = (v, cur) => v == null ? "—" : new Intl.NumberFormat(undefined, {style:"currency", currency:cur || "USD"}).format(v);
+
+$("#f").addEventListener("submit", async e => {
+  e.preventDefault();
+  const btn = $("#go"); btn.disabled = true; btn.textContent = "Searching…";
+  $("#out").innerHTML = "";
+  try {
+    const r = await fetch("/api/compare", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({url: $("#url").value})});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || "Something went wrong");
+    render(data);
+  } catch (err) {
+    $("#out").innerHTML = `<div class="card error">${esc(err.message)}</div>`;
+  } finally { btn.disabled = false; btn.textContent = "Compare"; }
+});
+
+function tags(o) {
+  let t = "";
+  if (o.discount_pct) t += `<span class="tag off">${o.discount_pct}% off</span>`;
+  (o.flags || []).forEach(f => t += `<span class="tag warn">${esc(f)}</span>`);
+  return t;
+}
+
+function render(d) {
+  const p = d.product, cur = p.currency, b = d.best;
+  let h = `<div class="card product">
+    ${p.image ? `<img src="${esc(p.image)}" alt="">` : ""}
+    <div><div><strong>${esc(p.title)}</strong></div>
+    <div class="muted">${esc(p.store)} · price on your link: ${money(p.price, cur)}</div>
+    <div class="muted">Source: ${esc(d.source)}</div></div></div>`;
+
+  if (!b) {
+    h += `<div class="card">No matching offers found.</div>`;
+  } else {
+    h += `<div class="card best">
+      <div class="muted">Best price</div>
+      <div class="price">${money(b.price, cur)}</div>
+      <div><strong>${esc(b.store)}</strong> ${b.original_price ? `<s>${money(b.original_price, cur)}</s>` : ""} ${tags(b)}</div>
+      ${d.savings_vs_link ? `<p>You save <strong>${money(d.savings_vs_link.amount, cur)}</strong> (${d.savings_vs_link.pct}%) compared to your link.</p>` : ""}
+      <a href="${esc(b.link)}" target="_blank" rel="noopener noreferrer">Go to offer →</a>
+    </div>`;
+
+    h += `<div class="card"><table><thead><tr><th>Store</th><th>Price</th><th class="hide-sm">Delivery</th><th class="hide-sm">Rating</th><th></th></tr></thead><tbody>`;
+    d.offers.forEach(o => {
+      h += `<tr><td><strong>${esc(o.store)}</strong><div class="muted">${esc(o.title)}</div>${tags(o)}</td>
+        <td class="num">${money(o.price, cur)}${o.original_price ? `<br><s>${money(o.original_price, cur)}</s>` : ""}</td>
+        <td class="hide-sm muted">${esc(o.shipping || "")}</td>
+        <td class="hide-sm muted">${o.rating ? `★ ${o.rating}${o.reviews ? ` (${o.reviews})` : ""}` : ""}</td>
+        <td><a href="${esc(o.link)}" target="_blank" rel="noopener noreferrer">View</a></td></tr>`;
+    });
+    h += `</tbody></table></div>`;
+  }
+
+  if (d.filtered_out.length) {
+    h += `<div class="card"><details><summary>${d.filtered_out.length} results filtered out</summary><table><tbody>`;
+    d.filtered_out.forEach(o => h += `<tr><td>${esc(o.store)} — ${esc(o.title)}<br>${tags(o)}</td><td class="num">${money(o.price, cur)}</td></tr>`);
+    h += `</tbody></table></details></div>`;
+  }
+  $("#out").innerHTML = h;
+}
+</script>
+</body>
+</html>
